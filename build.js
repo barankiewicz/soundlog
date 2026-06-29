@@ -30,7 +30,7 @@ function cleanAndPrepare() {
     const destPath = path.join(process.cwd(), lib.dest);
     if (fs.existsSync(srcPath)) {
       let content = fs.readFileSync(srcPath, 'utf-8');
-      // As per GEMINI.md, patch RxJS to work in a strict module worker context.
+      // Patch RxJS to work in a strict module worker context.
       if (lib.dest.includes('rxjs.umd.min.js')) {
         console.log('Patching RxJS for strict module environment...');
         // The UMD wrapper uses `this` which is undefined in a module.
@@ -38,6 +38,24 @@ function cleanAndPrepare() {
         // This allows RxJS to attach itself to `globalThis.rxjs`.
         content = content.replace(/(\(function\(g,y\)\{.*?\})\)\(this,/, '$1)(globalThis,');
       }
+
+      // Patch Transformers.js to remove the protobufjs `inquire` eval.
+      // ONNX Runtime bundles protobufjs to parse model files; protobuf probes
+      // for an optional Node module with eval("require"), which MV3's CSP
+      // forbids (only wasm-unsafe-eval is allowed). The call is wrapped in a
+      // try/catch and only used for an unavailable Node fallback, so replacing
+      // it with a function that returns null is a no-op functionally and
+      // removes the CSP violation entirely.
+      if (lib.dest.includes('transformers.js')) {
+        const evalCall = 'eval("quire".replace(/^/,"re"))';
+        if (content.includes(evalCall)) {
+          console.log('Patching Transformers.js to remove protobufjs eval (MV3 CSP)...');
+          content = content.split(evalCall).join('(function(){return null})');
+        } else {
+          console.warn('Transformers.js: protobufjs eval pattern not found; the bundled version may have changed.');
+        }
+      }
+
       fs.writeFileSync(destPath, content);
     } else {
       console.warn(`Missing vendor module dependency cache: ${lib.src}. Run "npm install" first.`);
