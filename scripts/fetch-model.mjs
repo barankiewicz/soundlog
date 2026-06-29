@@ -29,8 +29,17 @@ async function download(file) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
 
   process.stdout.write(`  ${file} ... `);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  // HuggingFace rejects requests without a User-Agent.
+  let res;
+  try {
+    res = await fetch(url, { headers: { 'User-Agent': 'soundlog-fetch-model' }, redirect: 'follow' });
+  } catch (err) {
+    // A real network/DNS/TLS failure surfaces here (fetch rejects).
+    throw new Error(`network error fetching ${url}: ${err.cause?.message || err.message}`);
+  }
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText} for ${url}`);
+  }
 
   const buf = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(dest, buf);
@@ -47,6 +56,5 @@ async function main() {
 
 main().catch(err => {
   console.error('\nfetch-model failed:', err.message);
-  console.error('Check your network connection and try again.');
   process.exit(1);
 });
