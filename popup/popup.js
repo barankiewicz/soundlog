@@ -1,15 +1,20 @@
 // popup/popup.js
+import { pendingReviews } from '../src/store/state.js';
+import { effect } from '../src/libs/signals.js';
 
-// DOM Container Anchors
 const appContainer = document.getElementById('app-container');
 
-// A simple local state object to mimic our database state before full signals wiring
-let localPendingReviews = [];
+// When false (settings view active), the reactive effect won't overwrite the settings page
+let inQueueMode = false;
 
-/**
- * Utility: Render the onboarding layout config dashboard view
- */
+// Re-runs whenever pendingReviews.value changes
+effect(() => {
+  const items = pendingReviews.value;
+  if (inQueueMode) renderQueueView(items);
+});
+
 function renderSettingsView() {
+  inQueueMode = false;
   browser.storage.local.get({
     username: '',
     apiKey: '',
@@ -18,12 +23,12 @@ function renderSettingsView() {
     appContainer.innerHTML = `
       <div style="padding: 4px 2px;">
         <h3 style="font-size:0.85rem; color:#ff5500; margin: 0 0 12px 0; text-transform: uppercase; letter-spacing: 0.05em;">SoundLog Configuration</h3>
-        
+
         <div style="margin-bottom:12px;">
           <label style="display:block; font-size:0.7rem; color:#a8a8b3; margin-bottom:4px; font-weight:bold;">LAST.FM USERNAME</label>
           <input type="text" id="cfg-username" style="width:100%; height:32px; background:#1a1a1e; color:#e1e1e6; border:1px solid #29292e; border-radius:4px; padding:0 8px; box-sizing:border-box;" placeholder="e.g., MusicNerd99" value="${config.username}">
         </div>
-        
+
         <div style="margin-bottom:12px;">
           <label style="display:block; font-size:0.7rem; color:#a8a8b3; margin-bottom:4px; font-weight:bold;">LAST.FM API KEY</label>
           <input type="password" id="cfg-key" style="width:100%; height:32px; background:#1a1a1e; color:#e1e1e6; border:1px solid #29292e; border-radius:4px; padding:0 8px; box-sizing:border-box;" placeholder="Paste API Key..." value="${config.apiKey}">
@@ -32,17 +37,17 @@ function renderSettingsView() {
         <div style="margin-bottom:16px;">
           <label style="display:block; font-size:0.7rem; color:#a8a8b3; margin-bottom:4px; font-weight:bold;">ALBUM MATCHING STRATEGY</label>
           <select id="cfg-strategy" style="width:100%; height:32px; background:#1a1a1e; color:#e1e1e6; border:1px solid #29292e; border-radius:4px; padding:0 8px; box-sizing:border-box; cursor:pointer;">
-            <option value="hybrid" ${config.matchingStrategy === 'hybrid' ? 'selected' : ''}>Hybrid Mode (Fast & Smart)</option>
+            <option value="hybrid" ${config.matchingStrategy === 'hybrid' ? 'selected' : ''}>Hybrid (Fast & Smart)</option>
             <option value="levenshtein" ${config.matchingStrategy === 'levenshtein' ? 'selected' : ''}>Levenshtein (Save Battery)</option>
-            <option value="ai" ${config.matchingStrategy === 'ai' ? 'selected' : ''}>Local AI Engine Only (WASM)</option>
+            <option value="ai" ${config.matchingStrategy === 'ai' ? 'selected' : ''}>Local AI Only (WASM)</option>
           </select>
         </div>
 
         <div id="historical-scan-section" style="background:#1a1a1e; border:1px solid #29292e; border-radius:4px; padding:12px; margin-bottom:16px; text-align: left;">
           <p style="font-size: 0.75rem; color: #a8a8b3; margin: 0 0 10px 0; line-height:1.4; text-align: center;">Backfill your queue from your Last.fm listening history:</p>
-          
+
           <div style="margin-bottom:10px;">
-            <label style="display:block; font-size:0.65rem; color:#a8a8b3; margin-bottom:4px; font-weight:bold;">SCAN DEPTH TIMELINE</label>
+            <label style="display:block; font-size:0.65rem; color:#a8a8b3; margin-bottom:4px; font-weight:bold;">SCAN DEPTH</label>
             <select id="scan-depth" style="width:100%; height:28px; background:#121214; color:#e1e1e6; border:1px solid #29292e; border-radius:4px; padding:0 6px; font-size:0.75rem; cursor:pointer;">
               <option value="1">Past 1 Year</option>
               <option value="2">Past 2 Years</option>
@@ -65,29 +70,20 @@ function renderSettingsView() {
   });
 }
 
-/**
- * Utility: Fetch current data from our CRDT store and render the active cards
- */
 async function loadAndRenderQueueView() {
+  inQueueMode = true;
   try {
-    // Dynamically import the DB state file to check current queue items
     const db = await import('../src/store/crdt-db.js');
-    
-    // Fallback pattern if getQueue is still being initialized
-    localPendingReviews = typeof db.readFreshAlbumQueue === 'function' ? await db.readFreshAlbumQueue() : [];
-    
-    renderQueueView();
+    const albums = typeof db.readFreshAlbumQueue === 'function' ? await db.readFreshAlbumQueue() : [];
+    pendingReviews.value = albums;
   } catch (err) {
-    console.error("Failed to read from CRDT database, defaulting to empty state:", err);
-    renderQueueView();
+    console.error("Failed to read from CRDT database:", err);
+    pendingReviews.value = [];
   }
 }
 
-/**
- * Utility: Render the active user queue deck grid layout
- */
-function renderQueueView() {
-  if (!localPendingReviews || localPendingReviews.length === 0) {
+function renderQueueView(items) {
+  if (!items || items.length === 0) {
     appContainer.innerHTML = `
       <div style="text-align:center; padding:40px 20px;">
         <p style="color:#a8a8b3; font-size:0.85rem; margin-bottom:16px;">Your SoundLog review queue is currently empty.</p>
@@ -100,8 +96,8 @@ function renderQueueView() {
   }
 
   let cardsHtml = `<div id="queue-list" style="display:flex; flex-direction:column; gap:12px; max-height:480px; overflow-y:auto; padding-right:4px;">`;
-  
-  localPendingReviews.forEach((item, index) => {
+
+  items.forEach((item, index) => {
     cardsHtml += `
       <div class="album-card" style="background:#1a1a1e; border:1px solid #29292e; border-radius:6px; padding:12px; box-sizing:border-box;">
         <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:8px;">
@@ -129,13 +125,10 @@ function renderQueueView() {
       </button>
     </div>
   `;
-  
+
   appContainer.innerHTML = cardsHtml;
 }
 
-/**
- * Direct Global Router Routing Initializer
- */
 function initViewRouter() {
   if (!appContainer) return;
 
@@ -150,9 +143,6 @@ function initViewRouter() {
   });
 }
 
-/**
- * Main Event Delegation Tree Mapping Logic
- */
 document.body.addEventListener('click', async (e) => {
   if (e.target && e.target.id === 'nav-to-settings') {
     renderSettingsView();
@@ -183,34 +173,33 @@ document.body.addEventListener('click', async (e) => {
     const statusDiv = document.getElementById('scan-status');
     const scanBtn = document.getElementById('historical-scan-btn');
     const depthSelect = document.getElementById('scan-depth').value;
-    
+
     scanBtn.disabled = true;
     statusDiv.style.display = "block";
-    statusDiv.innerText = "Connecting to background scan...";
+    statusDiv.innerText = "Connecting to background...";
 
     try {
       const backgroundWindow = await browser.runtime.getBackgroundPage();
-      
+
       if (!backgroundWindow || typeof backgroundWindow.runHistoricalScan !== 'function') {
-        statusDiv.innerText = "Error: Background scan routine unavailable.";
+        statusDiv.innerText = "Error: background scan unavailable.";
         scanBtn.disabled = false;
         return;
       }
 
       statusDiv.innerText = "Scan starting...";
-      
-      // Pass depthSelect value straight through the window boundary parameters
+
       const status = await backgroundWindow.runHistoricalScan(depthSelect, (progress) => {
-        statusDiv.innerText = `Processing page ${progress.page}/${progress.totalPages || '?'}\nFound ${progress.totalAlbumsFound} albums.`;
+        statusDiv.innerText = `Page ${progress.page}/${progress.totalPages || '?'} -- ${progress.totalAlbumsFound} albums found.`;
       });
 
       if (status && status.success) {
         statusDiv.style.color = "#04d361";
-        statusDiv.innerText = `Complete! Loaded ${status.totalAlbumsFound} legacy albums into your queue.`;
+        statusDiv.innerText = `Done. ${status.totalAlbumsFound} albums loaded into your queue.`;
         setTimeout(() => { initViewRouter(); }, 1500);
       } else {
         statusDiv.style.color = "#ff3333";
-        statusDiv.innerText = `Scan aborted: ${status ? status.error : 'Unknown error'}`;
+        statusDiv.innerText = `Scan failed: ${status ? status.error : 'unknown error'}`;
         scanBtn.disabled = false;
       }
     } catch (err) {
@@ -219,10 +208,11 @@ document.body.addEventListener('click', async (e) => {
     }
     return;
   }
+
   if (e.target && e.target.classList.contains('open-rym-btn')) {
     const idx = parseInt(e.target.getAttribute('data-index'), 10);
-    const targetCard = localPendingReviews[idx];
-    
+    const targetCard = pendingReviews.value[idx];
+
     const txtArea = document.querySelector(`textarea[data-index="${idx}"]`);
     const noteText = txtArea ? txtArea.value.trim() : "";
 
@@ -239,12 +229,12 @@ document.body.addEventListener('click', async (e) => {
       if (typeof db.removeFreshAlbumFromQueue === 'function') {
         await db.removeFreshAlbumFromQueue(targetCard.artist, targetCard.album);
       }
-      loadAndRenderQueueView(); 
+      // Update signal directly -- triggers reactive re-render without a full DB read
+      pendingReviews.value = pendingReviews.value.filter((_, i) => i !== idx);
     } catch (err) {
       console.error("Could not remove album from database:", err);
     }
   }
 });
 
-// Run router on load
 initViewRouter();

@@ -20,21 +20,32 @@ const sharedQueueArray = ydoc.getArray('album-review-queue');
  * Saves a qualified album tracking card into the shared CRDT state
  */
 export async function syncAlbumToCRDT(albumCard) {
-  // Wait for the local database handshake to finish before writing
   if (!provider.synced) {
     await new Promise(resolve => provider.once('synced', resolve));
   }
 
-  // Prevent duplicate cards from flooding the database rows
+  const { verifyMatchConfidence } = await import('/src/core/matcher-router.js');
   const currentItems = sharedQueueArray.toArray();
-  const isDuplicate = currentItems.some(item => 
-    item.artist.toLowerCase() === albumCard.artist.toLowerCase() &&
-    item.album.toLowerCase() === albumCard.album.toLowerCase()
-  );
+
+  let isDuplicate = false;
+  for (const item of currentItems) {
+    if (item.artist.toLowerCase() !== albumCard.artist.toLowerCase()) continue;
+    // Exact match fast path
+    if (item.album.toLowerCase() === albumCard.album.toLowerCase()) {
+      isDuplicate = true;
+      break;
+    }
+    // Fuzzy match via the configured strategy (Levenshtein / Hybrid / AI)
+    const score = await verifyMatchConfidence(item.album, albumCard.album);
+    if (score >= 0.85) {
+      isDuplicate = true;
+      break;
+    }
+  }
 
   if (!isDuplicate) {
     sharedQueueArray.push([albumCard]);
-    console.log(`Committed to CRDT Store: ${albumCard.album} by ${albumCard.artist}`);
+    console.log(`Committed to CRDT store: ${albumCard.album} by ${albumCard.artist}`);
   }
 }
 

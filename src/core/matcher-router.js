@@ -1,4 +1,4 @@
-import { calculateSemanticConfidence } from './vector-matcher.js';
+import { calculateSemanticSimilarity } from './vector-matcher.js';
 import { matchingStrategy } from '../store/state.js';
 
 function getLevenshteinDistance(a, b) {
@@ -43,13 +43,13 @@ export async function verifyMatchConfidence(sourceAlbum, candidateUrlSlug) {
   }
 
   if (strategy === 'ai') {
-    return await calculateSemanticConfidence(sourceAlbum, cleanUrlString);
+    return await calculateSemanticSimilarity(sourceAlbum, cleanUrlString);
   }
 
   if (strategy === 'hybrid') {
     const textScore = calculateTextSimilarity(sourceAlbum, cleanUrlString);
     if (textScore >= 0.95) return textScore; 
-    return await calculateSemanticConfidence(sourceAlbum, cleanUrlString);
+    return await calculateSemanticSimilarity(sourceAlbum, cleanUrlString);
   }
 
   return null;
