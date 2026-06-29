@@ -1,109 +1,107 @@
 // src/store/crdt-db.js
-import * as Y from '/src/libs/yjs.js'; 
+//
+// Persistence and queue API over the OR-Set CRDT (src/store/or-set.js).
+//
+// The popup and background run in separate JS contexts that share only
+// IndexedDB. To stay consistent, every operation reads the current state from
+// disk, merges it into a working OR-Set, applies the change, and writes back.
+// Because merge() is conflict-free, the popup removing an album and the
+// background adding one can never clobber each other.
+import { ORSet } from '/src/store/or-set.js';
 
-import { IndexeddbPersistence } from '/src/libs/y-indexeddb.js';
+const DB_NAME = 'soundlog-mesh';
+const STORE = 'crdt';
+const STATE_KEY = 'album-queue';
 
-// 1. Initialize your core Yjs Document container
-export const ydoc = new Y.Doc();
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = () => reject(req.error);
+  });
+}
 
-// 2. Bind the document to a local browser IndexedDB named 'soundlog-mesh'
-export const provider = new IndexeddbPersistence('soundlog-mesh', ydoc);
+function loadState(db) {
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(STATE_KEY);
+    req.onsuccess = () => resolve(ORSet.fromJSON(req.result));
+    req.onerror = () => reject(req.error);
+  });
+}
 
-// ... keep the rest of your file exactly the same!
+function saveState(db, set) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(set.toJSON(), STATE_KEY);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
 
-// 3. Create the shared array where your album review cards live
-const sharedQueueArray = ydoc.getArray('album-review-queue');
+function albumKey(artist, album) {
+  return `${artist}|||${album}`.toLowerCase();
+}
 
 /**
- * Saves a qualified album tracking card into the shared CRDT state
+ * Adds a qualified album to the queue, skipping exact and fuzzy duplicates.
+ * Fuzzy matching uses the strategy the user configured (Levenshtein/Hybrid/AI).
  */
 export async function syncAlbumToCRDT(albumCard) {
-  if (!provider.synced) {
-    await new Promise(resolve => provider.once('synced', resolve));
-  }
+  const db = await openDB();
+  try {
+    const set = await loadState(db);
+    const key = albumKey(albumCard.artist, albumCard.album);
 
-  const { verifyMatchConfidence } = await import('/src/core/matcher-router.js');
-  const currentItems = sharedQueueArray.toArray();
+    if (set.has(key)) return;
 
-  let isDuplicate = false;
-  for (const item of currentItems) {
-    if (item.artist.toLowerCase() !== albumCard.artist.toLowerCase()) continue;
-    // Exact match fast path
-    if (item.album.toLowerCase() === albumCard.album.toLowerCase()) {
-      isDuplicate = true;
-      break;
+    const { verifyMatchConfidence } = await import('/src/core/matcher-router.js');
+    for (const item of set.values()) {
+      if (item.artist.toLowerCase() !== albumCard.artist.toLowerCase()) continue;
+      const score = await verifyMatchConfidence(item.album, albumCard.album);
+      if (score >= 0.85) return;
     }
-    // Fuzzy match via the configured strategy (Levenshtein / Hybrid / AI)
-    const score = await verifyMatchConfidence(item.album, albumCard.album);
-    if (score >= 0.85) {
-      isDuplicate = true;
-      break;
-    }
-  }
 
-  if (!isDuplicate) {
-    sharedQueueArray.push([albumCard]);
+    set.add(key, albumCard);
+    await saveState(db, set);
     console.log(`Committed to CRDT store: ${albumCard.album} by ${albumCard.artist}`);
+  } finally {
+    db.close();
   }
 }
 
 /**
- * Reads the entire active queue out of the shared array map
+ * Returns the current queue, read fresh from IndexedDB.
  */
 export async function getAlbumQueue() {
-  if (!provider.synced) {
-    await new Promise(resolve => provider.once('synced', resolve));
-  }
-  return sharedQueueArray.toArray();
-}
-
-/**
- * Creates a throwaway Y.Doc + IndexeddbPersistence to read a fresh snapshot
- * of the queue directly from IndexedDB, bypassing any stale in-memory state.
- * Use this in the popup context where the module-level singleton may be stale.
- */
-export async function readFreshAlbumQueue() {
-  const freshDoc = new Y.Doc();
-  const freshProvider = new IndexeddbPersistence('soundlog-mesh', freshDoc);
-  await freshProvider.whenSynced;
-  return freshDoc.getArray('album-review-queue').toArray();
-}
-
-/**
- * Creates a throwaway Y.Doc + IndexeddbPersistence to remove an album from a
- * fresh snapshot of the queue. Use this in the popup context for the same
- * reason as readFreshAlbumQueue.
- */
-export async function removeFreshAlbumFromQueue(artist, album) {
-  const freshDoc = new Y.Doc();
-  const freshProvider = new IndexeddbPersistence('soundlog-mesh', freshDoc);
-  await freshProvider.whenSynced;
-
-  const freshArray = freshDoc.getArray('album-review-queue');
-  const currentItems = freshArray.toArray();
-  const targetIndex = currentItems.findIndex(item =>
-    item.artist.toLowerCase() === artist.toLowerCase() &&
-    item.album.toLowerCase() === album.toLowerCase()
-  );
-
-  if (targetIndex !== -1) {
-    freshArray.delete(targetIndex, 1);
-    console.log(`Removed from CRDT store: ${album} by ${artist}`);
+  const db = await openDB();
+  try {
+    const set = await loadState(db);
+    return set.values();
+  } finally {
+    db.close();
   }
 }
 
 /**
- * Deletes an album from the queue once it has been processed
+ * Removes an album from the queue once it has been processed.
  */
 export async function removeAlbumFromQueue(artist, album) {
-  const currentItems = sharedQueueArray.toArray();
-  const targetIndex = currentItems.findIndex(item =>
-    item.artist.toLowerCase() === artist.toLowerCase() &&
-    item.album.toLowerCase() === album.toLowerCase()
-  );
-
-  if (targetIndex !== -1) {
-    sharedQueueArray.delete(targetIndex, 1);
+  const db = await openDB();
+  try {
+    const set = await loadState(db);
+    set.remove(albumKey(artist, album));
+    await saveState(db, set);
     console.log(`Removed from CRDT store: ${album} by ${artist}`);
+  } finally {
+    db.close();
   }
 }
+
+// Every read and write already hits IndexedDB directly, so these aliases exist
+// only for the popup call sites that previously needed an explicit fresh read.
+export const readFreshAlbumQueue = getAlbumQueue;
+export const removeFreshAlbumFromQueue = removeAlbumFromQueue;

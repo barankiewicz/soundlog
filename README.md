@@ -19,7 +19,7 @@ There is also a one-time historical scan that can backfill your queue from years
 - Automatic background polling every 15 minutes via browser alarms
 - Historical backfill: scan 1, 2, 5 years, or your full listening history
 - Three matching modes: Levenshtein (lightweight), Hybrid, or local AI via Transformers.js and ONNX WebAssembly
-- Queue stored in a local CRDT database (Yjs over IndexedDB) -- offline-first and ready for optional sync later
+- Queue stored in a hand-written CRDT (an observed-remove set) over IndexedDB -- offline-first and ready for optional sync later
 - One-click workflow: notes copied to clipboard, RateYourMusic search opened
 - Targets both Firefox and Chrome from a single codebase
 
@@ -58,7 +58,7 @@ To get a Last.fm API key: [last.fm/api/account/create](https://www.last.fm/api/a
 | Layer | Choice | Why |
 |---|---|---|
 | Stream processing | RxJS | Groups and aggregates scrobble streams by album using `groupBy` and `mergeMap` |
-| Local persistence | Yjs CRDT + y-indexeddb | Conflict-free data structure, offline-first, designed for future sync |
+| Local persistence | Hand-written OR-Set CRDT over IndexedDB | Conflict-free, dependency-free, offline-first, designed for future sync (see `src/store/or-set.js`) |
 | Reactive state | Preact Signals | Fine-grained updates without a full UI framework |
 | Album matching | Transformers.js / ONNX | On-device vector embeddings via WebAssembly, no external API calls |
 | Runtime | Raw ES modules, no bundler | Runs directly in the browser extension context during development |
@@ -79,7 +79,7 @@ To get a Last.fm API key: [last.fm/api/account/create](https://www.last.fm/api/a
 
 Pull requests are welcome. Open an issue first for anything beyond a small fix so we can discuss direction.
 
-To build locally, see Installation above. There is no test suite yet -- manual testing via browser dev tools is the current workflow.
+To build locally, see Installation above. Run `npm test` for the CRDT unit tests. The rest is tested manually via browser dev tools.
 
 ---
 

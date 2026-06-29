@@ -9,9 +9,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm install       # install dependencies and populate node_modules
 npm run build     # copy + patch vendor libs into src/libs/, then zip Chrome + Firefox builds into dist/
+npm test          # run the OR-Set CRDT unit tests (tests/or-set.test.mjs)
 ```
 
-There is no test suite. Manual testing is done by loading the unpacked extension in the browser.
+`npm test` covers the CRDT logic only. Everything else (UI, ingestion, Last.fm calls) is tested manually by loading the unpacked extension in the browser.
 
 ---
 
@@ -19,9 +20,13 @@ There is no test suite. Manual testing is done by loading the unpacked extension
 
 SoundLog is a Manifest V3 browser extension with two separate JS execution contexts that share only IndexedDB. Never assume a variable or module instance in one context is visible in the other.
 
-**Background (`background.js`)** runs as a persistent event page (Firefox) or service worker (Chrome). It owns the authoritative Yjs document instance. It polls Last.fm every 15 minutes via browser alarms, pipes raw scrobbles through the RxJS aggregation pipeline in `src/core/stream.js`, and writes qualified album cards to the CRDT store via `syncAlbumToCRDT` in `src/store/crdt-db.js`. The historical scan (`runHistoricalScan`) follows the same write path, page by page.
+**Background (`background.js`)** runs as a persistent event page (Firefox) or service worker (Chrome). It polls Last.fm every 15 minutes via browser alarms, pipes raw scrobbles through the RxJS aggregation pipeline in `src/core/stream.js`, and writes qualified album cards to the CRDT store via `syncAlbumToCRDT` in `src/store/crdt-db.js`. The historical scan (`runHistoricalScan`) follows the same write path, page by page.
 
-**Popup (`popup/popup.js`)** is a short-lived page that renders the review queue and settings. It imports `src/store/crdt-db.js` independently, which creates its own `Y.Doc` + `IndexeddbPersistence` instance. This instance reads IndexedDB once at creation and does not receive subsequent writes from the background. Always call `readFreshAlbumQueue()` and `removeFreshAlbumFromQueue()` from the popup -- these create a throwaway doc, wait for `whenSynced`, and return fresh data. Never call `getAlbumQueue()` or `removeAlbumFromQueue()` from popup context; those use the stale module-level singleton.
+**Popup (`popup/popup.js`)** is a short-lived page that renders the review queue and settings. It reads the queue with `readFreshAlbumQueue()` and removes processed albums with `removeFreshAlbumFromQueue()`.
+
+**Storage layer.** The queue is a hand-written observed-remove set (OR-Set) CRDT in `src/store/or-set.js`, persisted to IndexedDB by `src/store/crdt-db.js`. There is no Yjs or external CRDT dependency. Because the popup and background are separate contexts sharing only IndexedDB, every operation in `crdt-db.js` is read-merge-modify-write: it loads the current state from disk, applies the change, and writes back. The OR-Set's conflict-free `merge()` means a popup removal and a background add can never clobber each other. As a result there is no stale-singleton hazard, and `getAlbumQueue`/`removeAlbumFromQueue` are simply aliases for the `*Fresh*` functions -- all paths read from disk.
+
+The OR-Set is a convergent (state-based) CRDT: `merge()` is commutative, associative, and idempotent (see `tests/or-set.test.mjs` for the properties verified). Value resolution for a concurrently-added key is deterministic (largest surviving dot wins), so replicas converge on the same value, not just the same membership. This is what keeps future local-to-cloud sync safe to add without touching the queue logic.
 
 **Data flow:**
 
@@ -32,12 +37,12 @@ background.js (alarm every 15 min)
     |
 src/core/stream.js  -- RxJS: filter > groupBy artist+album > mergeMap > toArray > map > filter(>= 5 unique tracks)
     |
-src/store/crdt-db.js  -- syncAlbumToCRDT writes to Y.Doc, IndexeddbPersistence persists to IndexedDB
+src/store/crdt-db.js  -- syncAlbumToCRDT: load OR-Set from IndexedDB, dedup, add, persist
     |
-popup/popup.js  -- readFreshAlbumQueue() spins up fresh Y.Doc, reads IndexedDB, renders cards
+popup/popup.js  -- readFreshAlbumQueue() reads the OR-Set from IndexedDB and renders cards
 ```
 
-**Vendor libraries** live in `src/libs/` and are NOT in source control. They are copied from `node_modules/` by `build.js` each time. Do not edit them by hand; edit `build.js` instead. The RxJS UMD bundle gets a one-line patch during copy to replace the top-level `this` IIFE argument with `globalThis` so it attaches to `window.rxjs` inside a strict ES module context.
+**Vendor libraries** live in `src/libs/` and are NOT in source control. They are copied from `node_modules/` by `build.js` each time. Do not edit them by hand; edit `build.js` instead. The RxJS UMD bundle gets a one-line patch during copy to replace the top-level `this` IIFE argument with `globalThis` so it attaches to `window.rxjs` inside a strict ES module context. Only libraries that ship browser-ready, self-contained files are vendored this way (signals, RxJS UMD, the Transformers.js webpack bundle, the webextension polyfill). Libraries published as bare-specifier ES modules with their own dependency graph (such as Yjs, which needs lib0) cannot be dropped in without a bundler, which is why the CRDT is hand-written instead.
 
 **Manifests** are split: `config/manifest.chrome.json` and `config/manifest.firefox.json`. The repo-root `manifest.json` is gitignored -- it is not the source of truth.
 

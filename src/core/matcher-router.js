@@ -1,5 +1,11 @@
-import { calculateSemanticSimilarity } from './vector-matcher.js';
 import { matchingStrategy } from '../store/state.js';
+
+// Lazily loaded so the Levenshtein strategy never pulls in the heavy
+// Transformers.js/ONNX bundle.
+async function calculateSemanticSimilarity(a, b) {
+  const mod = await import('./vector-matcher.js');
+  return mod.calculateSemanticSimilarity(a, b);
+}
 
 function getLevenshteinDistance(a, b) {
   const matrix = [];

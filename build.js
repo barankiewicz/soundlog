@@ -11,8 +11,9 @@ const VENDOR_LIBS = [
   { src: 'node_modules/webextension-polyfill/dist/browser-polyfill.js', dest: 'src/libs/webextension-polyfill.js' },
   { src: 'node_modules/rxjs/dist/bundles/rxjs.umd.min.js', dest: 'src/libs/rxjs.umd.min.js' },
   { src: 'node_modules/@preact/signals-core/dist/signals-core.module.js', dest: 'src/libs/signals.js' },
-  { src: 'node_modules/yjs/dist/yjs.cjs', dest: 'src/libs/yjs.js' },
   { src: 'node_modules/@xenova/transformers/dist/transformers.min.js', dest: 'src/libs/transformers.js' }
+  // Note: the CRDT store is hand-written (src/store/or-set.js) with no vendor
+  // dependency, so there is nothing to copy for it here.
 ];
 
 function cleanAndPrepare() {
