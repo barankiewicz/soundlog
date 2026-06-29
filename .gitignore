@@ -1,0 +1,13 @@
+# Dependency Cache
+node_modules/
+
+# Production Build Deliverables
+dist/
+
+# Generated at build time -- use config/manifest.chrome.json and config/manifest.firefox.json
+manifest.json
+
+# Local System & IDE Artifacts
+.DS_Store
+.vscode/
+*.log

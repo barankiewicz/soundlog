@@ -1,0 +1,89 @@
+// build.js
+import fs from 'fs';
+import path from 'path';
+import { execSync } from 'child_process';
+
+const ASSETS = ['background.js', 'icons', 'popup', 'src'];
+const DIST_DIR = path.join(process.cwd(), 'dist');
+
+// Map local npm node_modules bundles directly to our native extension directory layouts
+const VENDOR_LIBS = [
+  { src: 'node_modules/webextension-polyfill/dist/browser-polyfill.js', dest: 'src/libs/webextension-polyfill.js' },
+  { src: 'node_modules/rxjs/dist/bundles/rxjs.umd.min.js', dest: 'src/libs/rxjs.umd.min.js' },
+  { src: 'node_modules/@preact/signals-core/dist/signals-core.module.js', dest: 'src/libs/signals.js' },
+  { src: 'node_modules/yjs/dist/yjs.cjs', dest: 'src/libs/yjs.js' },
+  { src: 'node_modules/@xenova/transformers/dist/transformers.min.js', dest: 'src/libs/transformers.js' }
+];
+
+function cleanAndPrepare() {
+  // Clear any existing distribution builds
+  if (fs.existsSync(DIST_DIR)) fs.rmSync(DIST_DIR, { recursive: true });
+  fs.mkdirSync(DIST_DIR);
+  
+  // Ensure the internal local libraries folder structure is natively established
+  fs.mkdirSync(path.join(process.cwd(), 'src', 'libs'), { recursive: true });
+
+  // Gather dependency bundles out of node_modules cache and drop them into local src/libs/
+  VENDOR_LIBS.forEach(lib => {
+    const srcPath = path.join(process.cwd(), lib.src);
+    const destPath = path.join(process.cwd(), lib.dest);
+    if (fs.existsSync(srcPath)) {
+      let content = fs.readFileSync(srcPath, 'utf-8');
+      // As per GEMINI.md, patch RxJS to work in a strict module worker context.
+      if (lib.dest.includes('rxjs.umd.min.js')) {
+        console.log('Patching RxJS for strict module environment...');
+        // The UMD wrapper uses `this` which is undefined in a module.
+        // We replace the top-level `this` argument to the IIFE with `globalThis`.
+        // This allows RxJS to attach itself to `globalThis.rxjs`.
+        content = content.replace(/(\(function\(g,y\)\{.*?\})\)\(this,/, '$1)(globalThis,');
+      }
+      fs.writeFileSync(destPath, content);
+    } else {
+      console.warn(`Missing vendor module dependency cache: ${lib.src}. Run "npm install" first.`);
+    }
+  });
+
+  // Clean up old/incorrect RxJS file if it exists
+  if (fs.existsSync('src/libs/rxjs.min.js')) fs.rmSync('src/libs/rxjs.min.js');
+}
+
+function buildTarget(platform) {
+  console.log(`Packaging SoundLog for ${platform.toUpperCase()}...`);
+  
+  const stagePath = path.join(DIST_DIR, `stage-${platform}`);
+  fs.mkdirSync(stagePath, { recursive: true });
+
+  ASSETS.forEach(asset => {
+    const src = path.join(process.cwd(), asset);
+    const dest = path.join(stagePath, asset);
+    if (fs.statSync(src).isDirectory()) {
+      fs.cpSync(src, dest, { recursive: true });
+    } else {
+      fs.copyFileSync(src, dest);
+    }
+  });
+
+  const manifestSrc = path.join(process.cwd(), 'config', `manifest.${platform}.json`);
+  const manifestDest = path.join(stagePath, 'manifest.json');
+  fs.copyFileSync(manifestSrc, manifestDest);
+
+  const zipName = `soundlog-${platform}.zip`;
+  try {
+    if (process.platform === 'win32') {
+      execSync(`powershell Compress-Archive -Path "${stagePath}\\*" -DestinationPath "${path.join(DIST_DIR, zipName)}" -Force`);
+    } else {
+      execSync(`cd "${stagePath}" && zip -r "../${zipName}" ./* > /dev/null`);
+    }
+    console.log(`Generated dist/${zipName}`);
+  } catch (err) {
+    console.error(`Failed to package ${platform}:`, err.message);
+  }
+
+  fs.rmSync(stagePath, { recursive: true });
+}
+
+// Master execution pipeline
+cleanAndPrepare();
+buildTarget('chrome');
+buildTarget('firefox');
+console.log('\nMulti-platform bundle compilation complete! Vendors populated and artifacts ready in /dist');

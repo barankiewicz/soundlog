@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "SoundLog",
+  "version": "1.0.0",
+  "description": "Local-first, AI-enhanced music log for RateYourMusic.",
+  "permissions": ["storage", "alarms", "tabs", "clipboardWrite"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
+  "minimum_chrome_version": "120"
+}
