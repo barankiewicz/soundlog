@@ -1,9 +1,7 @@
 // src/store/crdt-db.js
 import * as Y from '/src/libs/yjs.js'; 
 
-// Change this line to import the whole module object instead of a named export
-import YIndexeddb from '/src/libs/y-indexeddb.js'; 
-const { IndexeddbPersistence } = YIndexeddb;
+import { IndexeddbPersistence } from '/src/libs/y-indexeddb.js';
 
 // 1. Initialize your core Yjs Document container
 export const ydoc = new Y.Doc();
