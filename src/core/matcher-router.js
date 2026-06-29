@@ -1,62 +1,30 @@
+// src/core/matcher-router.js
+// Strategy-aware match confidence. This is the opt-in AI surface: select a
+// strategy in the popup, then call verifyMatchConfidence (exposed for
+// deliberate testing as runMatchTest on the background page). The queue's
+// de-duplication does NOT go through here; it uses the cheap text matcher in
+// text-match.js directly so a bulk scan never triggers model inference.
 import { matchingStrategy } from '../store/state.js';
+import { calculateTextSimilarity } from './text-match.js';
 
-// Lazily loaded so the Levenshtein strategy never pulls in the heavy
+// Lazily loaded so text-only strategies never pull in the heavy
 // Transformers.js/ONNX bundle.
 async function calculateSemanticSimilarity(a, b) {
   const mod = await import('./vector-matcher.js');
   return mod.calculateSemanticSimilarity(a, b);
 }
 
-function getLevenshteinDistance(a, b) {
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
-    }
-  }
-  return matrix[b.length][a.length];
-}
-
-function calculateTextSimilarity(str1, str2) {
-  const s1 = str1.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
-  const s2 = str2.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
-  if (s1 === s2) return 1.0;
-  
-  const maxLength = Math.max(s1.length, s2.length);
-  if (maxLength === 0) return 1.0;
-  
-  const distance = getLevenshteinDistance(s1, s2);
-  return (maxLength - distance) / maxLength;
-}
-
-export async function verifyMatchConfidence(sourceAlbum, candidateUrlSlug) {
+export async function verifyMatchConfidence(a, b) {
   const strategy = matchingStrategy.value;
-  const cleanUrlString = candidateUrlSlug.replace(/-/g, " ");
+  const textScore = calculateTextSimilarity(a, b);
 
-  if (strategy === 'levenshtein') {
-    return calculateTextSimilarity(sourceAlbum, cleanUrlString);
-  }
+  if (strategy === 'levenshtein') return textScore;
+  if (strategy === 'ai') return await calculateSemanticSimilarity(a, b);
 
-  if (strategy === 'ai') {
-    return await calculateSemanticSimilarity(sourceAlbum, cleanUrlString);
-  }
-
-  if (strategy === 'hybrid') {
-    const textScore = calculateTextSimilarity(sourceAlbum, cleanUrlString);
-    if (textScore >= 0.95) return textScore; 
-    return await calculateSemanticSimilarity(sourceAlbum, cleanUrlString);
-  }
-
-  return null;
+  // hybrid: trust clear verdicts from the cheap matcher and only spend an
+  // embedding on genuinely ambiguous pairs. A score above 0.95 is almost
+  // certainly the same title; below 0.80 is almost certainly different. The AI
+  // only weighs in on the uncertain middle band.
+  if (textScore >= 0.95 || textScore < 0.80) return textScore;
+  return await calculateSemanticSimilarity(a, b);
 }

@@ -48,7 +48,9 @@ function albumKey(artist, album) {
 
 /**
  * Adds a qualified album to the queue, skipping exact and fuzzy duplicates.
- * Fuzzy matching uses the strategy the user configured (Levenshtein/Hybrid/AI).
+ * De-duplication is text-only (exact key + Levenshtein) so a historical scan
+ * never triggers model inference. The AI matcher is reserved for the opt-in
+ * strategy surface in matcher-router.js.
  */
 export async function syncAlbumToCRDT(albumCard) {
   const db = await openDB();
@@ -58,11 +60,10 @@ export async function syncAlbumToCRDT(albumCard) {
 
     if (set.has(key)) return;
 
-    const { verifyMatchConfidence } = await import('/src/core/matcher-router.js');
+    const { verifyTextMatch } = await import('/src/core/text-match.js');
     for (const item of set.values()) {
       if (item.artist.toLowerCase() !== albumCard.artist.toLowerCase()) continue;
-      const score = await verifyMatchConfidence(item.album, albumCard.album);
-      if (score >= 0.85) return;
+      if (verifyTextMatch(item.album, albumCard.album) >= 0.85) return;
     }
 
     set.add(key, albumCard);

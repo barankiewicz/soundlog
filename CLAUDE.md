@@ -7,12 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm install       # install dependencies and populate node_modules
-npm run build     # copy + patch vendor libs into src/libs/, then zip Chrome + Firefox builds into dist/
-npm test          # run the OR-Set CRDT unit tests (tests/or-set.test.mjs)
+npm install        # install dependencies and populate node_modules
+npm run fetch-model # optional: download the local AI model (~23 MB) into models/ (gitignored)
+npm run build      # copy + patch vendor libs and ORT wasm into src/libs/, bundle models/, zip Chrome + Firefox builds into dist/
+npm test           # run the OR-Set CRDT unit tests (tests/or-set.test.mjs)
 ```
 
-`npm test` covers the CRDT logic only. Everything else (UI, ingestion, Last.fm calls) is tested manually by loading the unpacked extension in the browser.
+`npm test` covers the CRDT logic only. Everything else (UI, ingestion, Last.fm calls) is tested manually by loading the unpacked extension in the browser. The build works without `fetch-model`; the AI matching strategy is simply unavailable until the model is present.
 
 ---
 
@@ -42,11 +43,15 @@ src/store/crdt-db.js  -- syncAlbumToCRDT: load OR-Set from IndexedDB, dedup, add
 popup/popup.js  -- readFreshAlbumQueue() reads the OR-Set from IndexedDB and renders cards
 ```
 
-**Vendor libraries** live in `src/libs/` and are NOT in source control. They are copied from `node_modules/` by `build.js` each time. Do not edit them by hand; edit `build.js` instead. The RxJS UMD bundle gets a one-line patch during copy to replace the top-level `this` IIFE argument with `globalThis` so it attaches to `window.rxjs` inside a strict ES module context. Only libraries that ship browser-ready, self-contained files are vendored this way (signals, RxJS UMD, the Transformers.js webpack bundle, the webextension polyfill). Libraries published as bare-specifier ES modules with their own dependency graph (such as Yjs, which needs lib0) cannot be dropped in without a bundler, which is why the CRDT is hand-written instead.
+**Vendor libraries** live in `src/libs/` and are NOT in source control (gitignored). They are copied from `node_modules/` by `build.js` each time. Do not edit them by hand; edit `build.js` instead. Two libraries get a string patch during copy: RxJS (replace the top-level `this` IIFE argument with `globalThis` so it attaches to `window.rxjs` in a strict module context) and Transformers.js (replace protobufjs's `eval("require")` probe with a function returning null, since MV3 CSP forbids eval). Only libraries that ship browser-ready, self-contained files are vendored this way (signals, RxJS UMD, the Transformers.js webpack bundle, the webextension polyfill). Libraries published as bare-specifier ES modules with their own dependency graph (such as Yjs, which needs lib0) cannot be dropped in without a bundler, which is why the CRDT is hand-written instead.
+
+**Matching and the AI model.** Queue de-duplication is text-only (`src/core/text-match.js`: exact key + Levenshtein), so a historical scan never loads a model. The AI matcher (`src/core/vector-matcher.js`) is the opt-in surface, reached through `src/core/matcher-router.js`, which honors the popup's strategy selector (Levenshtein / Hybrid / AI). Hybrid only escalates to an embedding for genuinely ambiguous pairs (text score between 0.80 and 0.95). To exercise the AI deliberately, set the strategy in the popup, then call `runMatchTest(a, b)` from the background console (exposed in `background.js`).
+
+The model runs fully offline. `vector-matcher.js` sets `allowLocalModels = true` / `allowRemoteModels = false`, loads weights from `models/` (downloaded by `npm run fetch-model`, gitignored, bundled into the build), and points ONNX at the bundled wasm runtime in `src/libs/ort/` (copied from `node_modules/onnxruntime-web` by `build.js`). `models/*` and `src/libs/ort/*` are declared in `web_accessible_resources` in both manifests. If `models/` is absent, the build still succeeds and the AI path degrades gracefully (the matcher catches the load failure and returns 0).
 
 **Manifests** are split: `config/manifest.chrome.json` and `config/manifest.firefox.json`. The repo-root `manifest.json` is gitignored -- it is not the source of truth.
 
-**State layer** (`src/store/state.js`) exposes Preact Signals: `pendingReviews` and `matchingStrategy`. These are not yet wired to the popup render loop (work in progress -- popup currently uses manual `innerHTML`).
+**State layer** (`src/store/state.js`) exposes Preact Signals: `pendingReviews` and `matchingStrategy`. The popup subscribes to `pendingReviews` through an `effect()` that re-renders the queue whenever the signal changes; queue loads and removals update the signal rather than calling the render function directly.
 
 ---
 

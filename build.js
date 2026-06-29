@@ -3,8 +3,16 @@ import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 
-const ASSETS = ['background.js', 'icons', 'popup', 'src'];
+const ASSETS = ['background.js', 'icons', 'popup', 'src', 'models'];
 const DIST_DIR = path.join(process.cwd(), 'dist');
+
+// ONNX Runtime wasm binaries, copied from node_modules so inference runs fully
+// offline (no jsdelivr CDN fetch). Only the single-threaded variants are needed
+// because vector-matcher pins numThreads to 1; the threaded build would require
+// cross-origin isolation we do not have in an extension page.
+const ORT_WASM_FILES = ['ort-wasm.wasm', 'ort-wasm-simd.wasm'];
+const ORT_SRC_DIR = 'node_modules/onnxruntime-web/dist';
+const ORT_DEST_DIR = 'src/libs/ort';
 
 // Map local npm node_modules bundles directly to our native extension directory layouts
 const VENDOR_LIBS = [
@@ -64,6 +72,24 @@ function cleanAndPrepare() {
 
   // Clean up old/incorrect RxJS file if it exists
   if (fs.existsSync('src/libs/rxjs.min.js')) fs.rmSync('src/libs/rxjs.min.js');
+
+  // Copy the ONNX Runtime wasm binaries for offline inference.
+  const ortDest = path.join(process.cwd(), ORT_DEST_DIR);
+  fs.mkdirSync(ortDest, { recursive: true });
+  ORT_WASM_FILES.forEach(file => {
+    const srcPath = path.join(process.cwd(), ORT_SRC_DIR, file);
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, path.join(ortDest, file));
+    } else {
+      console.warn(`Missing ONNX wasm binary: ${ORT_SRC_DIR}/${file}. Run "npm install" first.`);
+    }
+  });
+
+  // The local AI model is optional and gitignored. Warn if it is absent so the
+  // AI matching strategy degrades gracefully rather than failing silently.
+  if (!fs.existsSync(path.join(process.cwd(), 'models'))) {
+    console.warn('No models/ directory found. AI matching will be unavailable until you run "npm run fetch-model".');
+  }
 }
 
 function buildTarget(platform) {
@@ -75,6 +101,7 @@ function buildTarget(platform) {
   ASSETS.forEach(asset => {
     const src = path.join(process.cwd(), asset);
     const dest = path.join(stagePath, asset);
+    if (!fs.existsSync(src)) return; // optional assets (e.g. models/) may be absent
     if (fs.statSync(src).isDirectory()) {
       fs.cpSync(src, dest, { recursive: true });
     } else {

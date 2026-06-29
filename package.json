@@ -5,7 +5,8 @@
   "description": "Cross-platform browser music logger with Hybrid Matching Modes",
   "scripts": {
     "build": "node build.js",
-    "test": "node tests/or-set.test.mjs"
+    "test": "node tests/or-set.test.mjs",
+    "fetch-model": "node scripts/fetch-model.mjs"
   },
   "dependencies": {
     "@preact/signals-core": "^1.14.3",

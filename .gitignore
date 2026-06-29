@@ -4,6 +4,9 @@ node_modules/
 # Vendor libs copied from node_modules at build time (see build.js)
 src/libs/
 
+# Local AI model weights, downloaded via "npm run fetch-model" (see scripts/)
+models/
+
 # Production Build Deliverables
 dist/
 

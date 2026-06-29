@@ -18,7 +18,7 @@ There is also a one-time historical scan that can backfill your queue from years
 
 - Automatic background polling every 15 minutes via browser alarms
 - Historical backfill: scan 1, 2, 5 years, or your full listening history
-- Three matching modes: Levenshtein (lightweight), Hybrid, or local AI via Transformers.js and ONNX WebAssembly
+- Three matching modes: Levenshtein (lightweight), Hybrid, or local AI via Transformers.js and ONNX WebAssembly (model and runtime bundled, no network at inference time)
 - Queue stored in a hand-written CRDT (an observed-remove set) over IndexedDB -- offline-first and ready for optional sync later
 - One-click workflow: notes copied to clipboard, RateYourMusic search opened
 - Targets both Firefox and Chrome from a single codebase
@@ -31,10 +31,13 @@ Requires Node.js 18+ and npm.
 
 ```bash
 npm install
+npm run fetch-model   # optional: downloads the local AI model (~23 MB) for AI matching
 npm run build
 ```
 
-The build script copies vendor libraries into `src/libs/`, patches RxJS for a strict ES module context, and produces two zip files in `dist/`: `soundlog-firefox.zip` and `soundlog-chrome.zip`.
+The build script copies vendor libraries into `src/libs/`, patches RxJS for a strict ES module context, bundles the ONNX wasm runtime, and produces two zip files in `dist/`: `soundlog-firefox.zip` and `soundlog-chrome.zip`.
+
+`npm run fetch-model` is optional. Skip it and the extension works fine; the AI matching strategy just stays unavailable and the Levenshtein and Hybrid strategies are used instead. Once fetched, the model is bundled into the build so inference runs fully offline.
 
 **Firefox / LibreWolf**: Go to `about:debugging` > This Firefox > Load Temporary Add-on, then select `dist/soundlog-firefox.zip`.
 
@@ -60,16 +63,15 @@ To get a Last.fm API key: [last.fm/api/account/create](https://www.last.fm/api/a
 | Stream processing | RxJS | Groups and aggregates scrobble streams by album using `groupBy` and `mergeMap` |
 | Local persistence | Hand-written OR-Set CRDT over IndexedDB | Conflict-free, dependency-free, offline-first, designed for future sync (see `src/store/or-set.js`) |
 | Reactive state | Preact Signals | Fine-grained updates without a full UI framework |
-| Album matching | Transformers.js / ONNX | On-device vector embeddings via WebAssembly, no external API calls |
+| Album matching | Transformers.js / ONNX (all-MiniLM-L6-v2) | On-device vector embeddings via WebAssembly. Model weights and wasm runtime are bundled, so nothing is fetched at inference time |
 | Runtime | Raw ES modules, no bundler | Runs directly in the browser extension context during development |
 
 ---
 
 ## Roadmap
 
-- Complete Preact Signals integration in the popup render loop
-- Connect local AI matcher to the matching strategy selector
-- Optional cloud sync via y-websocket or y-webrtc
+- Use the AI matcher to rank RateYourMusic search results, not just open a search
+- Optional cloud sync (the OR-Set CRDT already supports conflict-free merge)
 - Queue export to CSV / JSON
 - Badge counter on the extension icon showing pending reviews
 

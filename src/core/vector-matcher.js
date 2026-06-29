@@ -1,11 +1,19 @@
 // src/core/vector-matcher.js
 import { env, pipeline } from '../libs/transformers.js';
 
-// MV3 requires wasm-unsafe-eval in CSP; these flags prevent ONNX from using eval()
-// and keep execution safe inside the extension sandbox.
-env.allowLocalModels = false;
+// Fully local, offline inference. The model weights ship in the extension
+// (run `npm run fetch-model`, then build) and the ONNX wasm runtime is bundled
+// from node_modules at build time. Nothing is fetched from a remote CDN, which
+// is what makes the "local-first, zero cloud" claim true.
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
 env.localModelPath = browser.runtime.getURL('models/');
-env.backends.onnx.env.wasm.numThreads = 1;
+
+// Point ONNX at the bundled wasm binaries instead of the jsdelivr CDN.
+env.backends.onnx.wasm.wasmPaths = browser.runtime.getURL('src/libs/ort/');
+// Single thread: avoids the cross-origin-isolation requirement of the threaded
+// wasm build and keeps memory predictable inside the extension sandbox.
+env.backends.onnx.wasm.numThreads = 1;
 
 let embeddingPipelineInstance = null;
 

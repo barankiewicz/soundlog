@@ -5,10 +5,23 @@
 if (typeof window !== 'undefined') {
   window.runIngestPipeline = runIngestPipeline;
   window.runHistoricalScan = runHistoricalScan;
+  window.runMatchTest = runMatchTest;
 }
 if (typeof globalThis !== 'undefined') {
   globalThis.runIngestPipeline = runIngestPipeline;
   globalThis.runHistoricalScan = runHistoricalScan;
+  globalThis.runMatchTest = runMatchTest;
+}
+
+// Deliberate, opt-in entry point for the AI matcher. The queue's de-duplication
+// stays text-only, so this is the only place the embedding model runs. Pick a
+// strategy in the popup, then from the background console:
+//   await runMatchTest("The Glow Pt. 2", "The Glow, Part II (Remastered)")
+async function runMatchTest(a, b) {
+  const { verifyMatchConfidence } = await import('./src/core/matcher-router.js');
+  const score = await verifyMatchConfidence(a, b);
+  console.log(`Match confidence "${a}" <-> "${b}": ${(score * 100).toFixed(1)}%`);
+  return score;
 }
 
 // Core execution function
